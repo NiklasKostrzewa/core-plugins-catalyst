@@ -29,7 +29,7 @@ mlirGetDialectPluginInfo() {
           .pluginName = "QC",
           .pluginVersion = LLVM_VERSION_STRING,
           .registerDialectRegistryCallbacks = [](DialectRegistry* registry) {
-            registry->insert<::mlir::QCDialect>();
+            registry->insert<::qc::QCDialect>();
           }};
 }
 
@@ -43,7 +43,7 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo mlirGetPassPluginInfo() {
             // Only register the conversion passes we implement
             // Note: mqt::ir::opt::registerQCPasses() is not called to avoid
             // pulling in transpilation transforms that require LLVM 21
-            // mqt::ir::conversions::registerCatalystQuantumToQCPasses();
-            mqt::ir::conversions::registerQCToCatalystQuantumPasses();
+            mqt::ir::conversions::registerCatalystQuantumToQCPasses();
+            // mqt::ir::conversions::registerQCToCatalystQuantumPasses();
           }};
 }

@@ -186,13 +186,13 @@ public:
 
     // Convert Catalyst QubitType to QC QubitType
     addConversion([ctx](catalyst::quantum::QubitType /*type*/) -> Type {
-      return opt::QubitType::get(ctx);
+      return qc::QubitType::get(ctx);
     });
 
     // Convert Catalyst QuregType to dynamic memref as placeholder
     // The actual static memref types will flow through from alloc operations
     addConversion([ctx](catalyst::quantum::QuregType /*type*/) -> Type {
-      auto qubitType = opt::QubitType::get(ctx);
+      auto qubitType = qc::QubitType::get(ctx);
       return MemRefType::get(
           {ShapedType::kDynamic}, // NOLINT(misc-include-cleaner)
           qubitType);
@@ -227,7 +227,7 @@ struct ConvertQuantumAlloc final
     auto nqubitsAttr = op.getNqubitsAttrAttr();
 
     // Prepare the result type(s)
-    const auto qubitType = opt::QubitType::get(rewriter.getContext());
+    const auto qubitType = qc::QubitType::get(rewriter.getContext());
 
     if (nqubitsAttr) {
       // Static allocation
@@ -290,18 +290,13 @@ struct ConvertQuantumMeasure final
     // Extract operand(s)
     const auto inQubit = adaptor.getInQubit();
 
-    // Prepare the result type(s)
-    const auto qubitType = opt::QubitType::get(rewriter.getContext());
-    const auto bitType = rewriter.getI1Type();
-
     // Create the new operation
     // Note: quantum.measure returns (i1, !quantum.bit)
-    //       QC.measure returns (!QC.Qubit, i1)
-    auto QCOp = rewriter.create<opt::MeasureOp>(op.getLoc(), qubitType, bitType,
-                                                inQubit);
+    //       qc.measure returns i1
+    auto QCOp = rewriter.create<qc::MeasureOp>(op.getLoc(), inQubit);
 
     // Replace with results in the correct order
-    rewriter.replaceOp(op, {QCOp.getResult(1), QCOp.getResult(0)});
+    rewriter.replaceOp(op, {inQubit, QCOp.getResult()});
     return success();
   }
 };
@@ -314,7 +309,7 @@ struct ConvertQuantumExtract final
   matchAndRewrite(catalyst::quantum::ExtractOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter& rewriter) const override {
     // Prepare the result type(s)
-    const auto qubitType = opt::QubitType::get(rewriter.getContext());
+    const auto qubitType = qc::QubitType::get(rewriter.getContext());
 
     // Get index (either from attribute or operand)
     Value indexValue;
@@ -418,59 +413,6 @@ struct ConvertQuantumInsert final
   }
 };
 
-struct ConvertQuantumGlobalPhase final
-    : OpConversionPattern<catalyst::quantum::GlobalPhaseOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(catalyst::quantum::GlobalPhaseOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter& rewriter) const override {
-    // Extract operand(s) and attribute(s)
-    const auto param = adaptor.getParams();
-    const auto inCtrlQubits = adaptor.getInCtrlQubits();
-    const auto inCtrlValues = adaptor.getInCtrlValues();
-
-    // Separate positive and negative control qubits
-    ControlPartitionResult ctrlResult;
-    if (failed(partitionControlQubits(inCtrlQubits, inCtrlValues, rewriter,
-                                      op.getLoc(), ctrlResult))) {
-      return failure();
-    }
-
-    const auto& inPosCtrlQubitsVec = ctrlResult.posCtrlQubits;
-    const auto& inNegCtrlQubitsVec = ctrlResult.negCtrlQubits;
-
-    // Create the parameter attributes
-    const SmallVector<double> staticParamsVec;
-    SmallVector<bool> paramsMaskVec;
-    SmallVector<Value> finalParamValues;
-
-    // All parameters are treated as dynamic during conversion
-    // Constant folding should be done by canonicalization passes
-    finalParamValues.push_back(param);
-    paramsMaskVec.push_back(false);
-
-    const auto staticParams =
-        DenseF64ArrayAttr::get(rewriter.getContext(), staticParamsVec);
-    const auto paramsMask =
-        DenseBoolArrayAttr::get(rewriter.getContext(), paramsMaskVec);
-
-    // Create the new operation
-    auto QCOp = rewriter.create<opt::GPhaseOp>(
-        op.getLoc(), TypeRange{},                   // out_qubits
-        ValueRange(inPosCtrlQubitsVec).getTypes(),  // pos_ctrl_out_qubits
-        ValueRange(inNegCtrlQubitsVec).getTypes(),  // neg_ctrl_out_qubits
-        staticParams, paramsMask, finalParamValues, // params
-        ValueRange{},                               // in_qubits
-        ValueRange(inPosCtrlQubitsVec),             // pos_ctrl_in_qubits
-        ValueRange(inNegCtrlQubitsVec));            // neg_ctrl_in_qubits
-
-    // Replace the original with the new operation
-    rewriter.replaceOp(op, QCOp);
-    return success();
-  }
-};
-
 struct ConvertQuantumCustomOp final
     : OpConversionPattern<catalyst::quantum::CustomOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -513,7 +455,7 @@ struct ConvertQuantumCustomOp final
     Operation* QCOp = nullptr;
 
 #define CREATE_GATE_OP(GATE_TYPE)                                              \
-  rewriter.create<opt::GATE_TYPE##Op>(                                         \
+  rewriter.create<qc::GATE_TYPE##Op>(                                          \
       op.getLoc(), inQubits.getTypes(),                                        \
       ValueRange(additionalPosCtrlQubits).getTypes(),                          \
       ValueRange(additionalNegCtrlQubits).getTypes(), staticParams,            \
@@ -523,7 +465,7 @@ struct ConvertQuantumCustomOp final
     if (gateName == "Hadamard") {
       QCOp = CREATE_GATE_OP(H);
     } else if (gateName == "Identity") {
-      QCOp = CREATE_GATE_OP(I);
+      QCOp = CREATE_GATE_OP(Id);
     } else if (gateName == "PauliX") {
       QCOp = CREATE_GATE_OP(X);
     } else if (gateName == "PauliY") {
@@ -553,11 +495,7 @@ struct ConvertQuantumCustomOp final
     } else if (gateName == "SWAP") {
       QCOp = CREATE_GATE_OP(SWAP);
     } else if (gateName == "ISWAP") {
-      if (op.getAdjoint()) {
-        QCOp = CREATE_GATE_OP(iSWAPdg);
-      } else {
-        QCOp = CREATE_GATE_OP(iSWAP);
-      }
+      QCOp = CREATE_GATE_OP(iSWAP);
     } else if (gateName == "RX") {
       QCOp = CREATE_GATE_OP(RX);
     } else if (gateName == "RY") {
@@ -570,7 +508,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(1), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto crxOp = rewriter.create<opt::RXOp>(
+      auto crxOp = rewriter.create<qc::RXOp>(
           op.getLoc(), inQubits[1].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -584,7 +522,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(1), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto cryOp = rewriter.create<opt::RYOp>(
+      auto cryOp = rewriter.create<qc::RYOp>(
           op.getLoc(), inQubits[1].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -598,7 +536,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(1), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto crzOp = rewriter.create<opt::RZOp>(
+      auto crzOp = rewriter.create<qc::RZOp>(
           op.getLoc(), inQubits[1].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -612,7 +550,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(1), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto cpOp = rewriter.create<opt::POp>(
+      auto cpOp = rewriter.create<qc::POp>(
           op.getLoc(), inQubits[1].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -639,7 +577,7 @@ struct ConvertQuantumCustomOp final
       auto isingxyParamsMaskAttr =
           DenseBoolArrayAttr::get(rewriter.getContext(), isingxyParamsMask);
 
-      QCOp = rewriter.create<opt::XXplusYYOp>(
+      QCOp = rewriter.create<qc::XXPlusYYOp>(
           op.getLoc(), inQubits.getTypes(),
           ValueRange(additionalPosCtrlQubits).getTypes(),
           ValueRange(additionalNegCtrlQubits).getTypes(),
@@ -655,7 +593,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(1), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto cnotOp = rewriter.create<opt::XOp>(
+      auto cnotOp = rewriter.create<qc::XOp>(
           op.getLoc(), inQubits[1].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -669,7 +607,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(1), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto cyOp = rewriter.create<opt::YOp>(
+      auto cyOp = rewriter.create<qc::YOp>(
           op.getLoc(), inQubits[1].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -683,7 +621,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(1), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto czOp = rewriter.create<opt::ZOp>(
+      auto czOp = rewriter.create<qc::ZOp>(
           op.getLoc(), inQubits[1].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -697,7 +635,7 @@ struct ConvertQuantumCustomOp final
       auto controlLists = buildControlLists(
           inQubits.take_front(2), ValueRange(additionalPosCtrlQubits),
           ValueRange(additionalNegCtrlQubits));
-      auto toffoliOp = rewriter.create<opt::XOp>(
+      auto toffoliOp = rewriter.create<qc::XOp>(
           op.getLoc(), inQubits[2].getType(),
           ValueRange(controlLists.posCtrlQubits).getTypes(),
           ValueRange(controlLists.negCtrlQubits).getTypes(), staticParams,
@@ -716,7 +654,7 @@ struct ConvertQuantumCustomOp final
                    additionalPosCtrlQubits.end());
       const SmallVector<Value> negCtrls(additionalNegCtrlQubits.begin(),
                                         additionalNegCtrlQubits.end());
-      auto cswapOp = rewriter.create<opt::SWAPOp>(
+      auto cswapOp = rewriter.create<qc::SWAPOp>(
           op.getLoc(), ValueRange{inQubits[1], inQubits[2]},
           ValueRange(ctrls).getTypes(), ValueRange(negCtrls).getTypes(),
           staticParams, paramsMask, finalParamValues,
@@ -730,11 +668,11 @@ struct ConvertQuantumCustomOp final
 
       // Collect all control results first
       for (size_t i = 0; i < totalCtrls; ++i) {
-        results.push_back(cswapOp.getResult(numTargets + i));
+        results.push_back(cswapOp.getODSResults(numTargets + i));
       }
       // Then append target results
-      results.push_back(cswapOp.getResult(0));
-      results.push_back(cswapOp.getResult(1));
+      results.push_back(cswapOp.getODSResults(0));
+      results.push_back(cswapOp.getODSResults(1));
 
       rewriter.replaceOp(op, results);
       return success();
@@ -747,91 +685,6 @@ struct ConvertQuantumCustomOp final
     // Replace the original with the new operation
     rewriter.replaceOp(op, QCOp);
     return success();
-  }
-};
-
-struct CatalystQuantumToQC final
-    : impl::CatalystQuantumToQCBase<CatalystQuantumToQC> {
-  using CatalystQuantumToQCBase::CatalystQuantumToQCBase;
-
-  void runOnOperation() override {
-    MLIRContext* context = &getContext();
-    auto* module = getOperation();
-
-    ConversionTarget target(*context);
-    target.addLegalDialect<opt::QCDialect>();
-    target.addLegalDialect<mlir::memref::MemRefDialect>();
-    target.addLegalDialect<mlir::arith::ArithDialect>();
-    target.addIllegalDialect<catalyst::quantum::QuantumDialect>();
-
-    // Mark operations legal that have no equivalent in the target dialect
-    target.addLegalOp<
-        catalyst::quantum::DeviceInitOp, catalyst::quantum::DeviceReleaseOp,
-        catalyst::quantum::NamedObsOp, catalyst::quantum::ExpvalOp,
-        catalyst::quantum::FinalizeOp, catalyst::quantum::ComputationalBasisOp,
-        catalyst::quantum::StateOp, catalyst::quantum::InitializeOp>();
-
-    const CatalystQuantumToQCTypeConverter typeConverter(context);
-    RewritePatternSet patterns(context);
-
-    patterns
-        .add<ConvertQuantumAlloc, ConvertQuantumDealloc, ConvertQuantumMeasure,
-             ConvertQuantumExtract, ConvertQuantumInsert,
-             ConvertQuantumGlobalPhase, ConvertQuantumCustomOp>(typeConverter,
-                                                                context);
-
-    // Type conversion boilerplate to handle function signatures and control
-    // flow See: https://www.jeremykun.com/2023/10/23/mlir-dialect-conversion
-
-    // Convert func.func signatures to use the converted types
-    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
-        patterns, typeConverter);
-
-    // Mark func.func as legal only if signature and body types are converted
-    target.addDynamicallyLegalOp<func::FuncOp>([&](Operation* op) {
-      if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
-        return typeConverter.isSignatureLegal(funcOp.getFunctionType()) &&
-               typeConverter.isLegal(&funcOp.getBody());
-      }
-      return true; // Not a FuncOp, treat as legal (not our concern)
-    });
-
-    // Convert return ops to match the new function result types
-    populateReturnOpTypeConversionPattern(patterns, typeConverter);
-
-    // Mark func.return as legal only if operand types match converted types
-    target.addDynamicallyLegalOp<func::ReturnOp>([&](Operation* op) {
-      if (isa<func::ReturnOp>(op)) {
-        return typeConverter.isLegal(op);
-      }
-      return true;
-    });
-
-    // Convert call sites to use the converted argument and result types
-    populateCallOpTypeConversionPattern(patterns, typeConverter);
-
-    // Mark func.call as legal only if operand and result types are converted
-    target.addDynamicallyLegalOp<func::CallOp>([&](Operation* op) {
-      if (isa<func::CallOp>(op)) {
-        return typeConverter.isLegal(op);
-      }
-      return true;
-    });
-
-    // Convert control-flow ops (cf.br, cf.cond_br, etc.)
-    populateBranchOpInterfaceTypeConversionPattern(patterns, typeConverter);
-
-    // Mark unknown ops as legal if they don't require type conversion
-    target.markUnknownOpDynamicallyLegal([&](Operation* op) {
-      return isNotBranchOpInterfaceOrReturnLikeOp(op) ||
-             isLegalForBranchOpInterfaceTypeConversionPattern(op,
-                                                              typeConverter) ||
-             isLegalForReturnOpTypeConversionPattern(op, typeConverter);
-    });
-
-    if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
-      signalPassFailure();
-    }
   }
 };
 
