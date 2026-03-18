@@ -326,30 +326,4 @@ struct ConvertQCStore final : OpConversionPattern<memref::StoreOp> {
   }
 };
 
-struct ConvertQCCast final : OpConversionPattern<memref::CastOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(memref::CastOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter& rewriter) const override {
-    // Only convert if it's a cast between qubit memrefs
-    auto srcType = dyn_cast<BaseMemRefType>(op.getSource().getType());
-    auto dstType = dyn_cast<BaseMemRefType>(op.getType());
-    auto srcElem = srcType ? srcType.getElementType() : Type();
-    auto dstElem = dstType ? dstType.getElementType() : Type();
-
-    if (!srcType || !dstType ||
-        !(isa<qc::QubitType>(srcElem) ||
-          isa<catalyst::quantum::QubitType>(srcElem)) ||
-        !(isa<qc::QubitType>(dstElem) ||
-          isa<catalyst::quantum::QubitType>(dstElem))) {
-      return failure();
-    }
-
-    // Both should convert to !quantum.reg
-    rewriter.replaceOp(op, adaptor.getSource());
-    return success();
-  }
-};
-
 } // namespace mqt::ir::conversions
