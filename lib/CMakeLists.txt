@@ -23,7 +23,7 @@ add_subdirectory(Conversion)
 set(TARGET_NAME mqt-core-plugins-catalyst)
 
 add_llvm_library(${TARGET_NAME} MODULE mqt-plugin.cpp LINK_LIBS CatalystQuantumToQC
-        QCToCatalystQuantum)
+                 QCToCatalystQuantum)
 
 # set required C++ standard
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_20)
