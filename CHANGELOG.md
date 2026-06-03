@@ -9,6 +9,10 @@ This project adheres to [Semantic Versioning], with the exception that minor rel
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-02
+
+This release is compatible with Catalyst `0.14.1` and PennyLane `~=0.44.1`.
+
 ### Added
 
 - 🚸 Add [CMake presets] to provide a standardized and reproducible way to configure builds ([#137]) ([**@denialhaag**])
@@ -20,6 +24,8 @@ This project adheres to [Semantic Versioning], with the exception that minor rel
 - ⬆️ Update Catalyst to version 0.14.1 ([#77]) ([**@denialhaag**])
 
 ## [1.0.0] - 2026-01-26
+
+This release is compatible with Catalyst `0.14.0` and PennyLane `0.44.0`.
 
 ### Added
 
@@ -46,7 +52,8 @@ _📚 Refer to the [original MQT Core PR] for initial discussions and decisions 
 
 <!-- Version links -->
 
-[unreleased]: https://github.com/munich-quantum-toolkit/core-plugins-catalyst/compare/v1.0.0...HEAD
+[unreleased]: https://github.com/munich-quantum-toolkit/core-plugins-catalyst/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/munich-quantum-toolkit/core-plugins-catalyst/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/munich-quantum-toolkit/core-plugins-catalyst/compare/052a747...v1.0.0
 
 <!-- PR links -->
@@ -71,4 +78,6 @@ _📚 Refer to the [original MQT Core PR] for initial discussions and decisions 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Common Changelog]: https://common-changelog.org
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+[CMake presets]: https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html
+[munich-quantum-toolkit/workflows]: https://github.com/munich-quantum-toolkit/workflows
 [original MQT Core PR]: https://github.com/munich-quantum-toolkit/core/pull/881
