@@ -37,7 +37,7 @@ support
 :maxdepth: 1
 :hidden:
 
-api/catalyst/index
+api/mqt/core/plugins/catalyst/index
 ```
 
 ## Contributors and Supporters
