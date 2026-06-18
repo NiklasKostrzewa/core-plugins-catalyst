@@ -18,7 +18,6 @@ def QCToCatalystQuantum : Pass<"qc-to-catalystquantum"> {
     "::catalyst::quantum::QuantumDialect",
     "::mlir::arith::ArithDialect",
     "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
     "::mlir::qc::QCDialect"
   ];
 }

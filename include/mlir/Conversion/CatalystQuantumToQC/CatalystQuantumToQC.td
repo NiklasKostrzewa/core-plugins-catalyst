@@ -26,6 +26,7 @@ def CatalystQuantumToQC : Pass<"catalystquantum-to-qc"> {
 
   // Define dependent dialects
   let dependentDialects = [
+    "mlir::memref::MemRefDialect",
     "catalyst::quantum::QuantumDialect",
     "mlir::qc::QCDialect"
   ];
